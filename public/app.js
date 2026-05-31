@@ -98,6 +98,12 @@ async function startSession() {
       model: tokenData.model,
       config: {
         responseModalities: [Modality.AUDIO],
+        systemInstruction: tokenData.system_prompt
+          ? { parts: [{ text: tokenData.system_prompt }] }
+          : undefined,
+        speechConfig: tokenData.voice
+          ? { voiceConfig: { prebuiltVoiceConfig: { voiceName: tokenData.voice } } }
+          : undefined,
         inputAudioTranscription: {},
         outputAudioTranscription: {},
       },
