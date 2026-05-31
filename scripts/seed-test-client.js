@@ -18,7 +18,7 @@ const encrypted_api_key = encrypt(geminiApiKey);
 const doc = {
   display_name:      'Test Client',
   encrypted_api_key,
-  model:             'gemini-2.0-flash-live-001',
+  model:             'gemini-2.5-flash-native-audio-latest',
   voice:             'Puck',
   system_prompt:     'You are a helpful, concise voice assistant.',
   enabled:           true,

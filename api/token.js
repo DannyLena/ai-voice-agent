@@ -22,7 +22,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     token: config.api_key,
-    model: config.model ?? 'gemini-2.0-flash-live-001',
+    model: config.model ?? 'gemini-2.5-flash-native-audio-latest',
     voice: config.voice,
     system_prompt: config.system_prompt,
   });
