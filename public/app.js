@@ -204,7 +204,17 @@ async function startCapture() {
     source.connect(workletNode);
     workletNode.connect(captureCtx.destination);
   } catch (err) {
-    showError(`Microphone error: ${err.message}`);
+    let msg;
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      msg = 'Microphone access was denied. Please click the 🔒 or 🎙️ icon in your browser address bar and allow microphone access, then reload the page.';
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      msg = 'No microphone found. Please connect a microphone and try again.';
+    } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      msg = 'Your microphone is in use by another app. Please close other apps using the mic and try again.';
+    } else {
+      msg = `Microphone error: ${err.message}`;
+    }
+    showError(msg);
   }
 }
 
