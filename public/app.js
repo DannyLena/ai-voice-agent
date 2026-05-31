@@ -105,9 +105,9 @@ async function startSession() {
           speech_config: tokenData.voice ? {
             voice_config: { prebuilt_voice_config: { voice_name: tokenData.voice } }
           } : undefined,
-          input_audio_transcription: {},
-          output_audio_transcription: {},
         },
+        input_audio_transcription: {},
+        output_audio_transcription: {},
         system_instruction: tokenData.system_prompt
           ? { parts: [{ text: tokenData.system_prompt }] }
           : undefined,
