@@ -1,4 +1,3 @@
-import { GoogleGenAI, Modality } from 'https://esm.sh/@google/genai@1.52.0/dist/web/index.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -90,53 +89,58 @@ async function startSession() {
     return;
   }
 
-  // ── 2. Connect directly to Gemini Live using ephemeral token ──────────────
-  try {
-    const ai = new GoogleGenAI({ apiKey: tokenData.token, httpOptions: { apiVersion: 'v1alpha' } });
+  // ── 2. Connect directly to Gemini Live via raw WebSocket ─────────────────
+  const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(tokenData.token)}`;
 
-    geminiSession = await ai.live.connect({
-      model: tokenData.model,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        systemInstruction: tokenData.system_prompt
+  const ws = new WebSocket(wsUrl);
+  geminiSession = ws;
+
+  ws.addEventListener('open', () => {
+    // Send setup message
+    const setup = {
+      setup: {
+        model: `models/${tokenData.model}`,
+        generation_config: {
+          response_modalities: ['AUDIO'],
+          speech_config: tokenData.voice ? {
+            voice_config: { prebuilt_voice_config: { voice_name: tokenData.voice } }
+          } : undefined,
+          input_audio_transcription: {},
+          output_audio_transcription: {},
+        },
+        system_instruction: tokenData.system_prompt
           ? { parts: [{ text: tokenData.system_prompt }] }
           : undefined,
-        speechConfig: tokenData.voice
-          ? { voiceConfig: { prebuiltVoiceConfig: { voiceName: tokenData.voice } } }
-          : undefined,
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
       },
-      callbacks: {
-        onopen() {
-          setState(State.LISTENING);
-          startCapture();
-        },
+    };
+    ws.send(JSON.stringify(setup));
+  });
 
-        onmessage(msg) {
-          try { handleGeminiMessage(msg); } catch (err) { showError(err.message); }
-        },
+  ws.addEventListener('message', async (event) => {
+    try {
+      const text = event.data instanceof Blob ? await event.data.text() : event.data;
+      const msg = JSON.parse(text);
+      if (msg.setupComplete) {
+        setState(State.LISTENING);
+        startCapture();
+        return;
+      }
+      handleGeminiMessage(msg);
+    } catch (err) {
+      showError(err.message);
+    }
+  });
 
-        onerror(err) {
-          showError(err instanceof Error ? err.message : String(err));
-        },
+  ws.addEventListener('error', () => showError('Gemini connection failed'));
 
-        onclose(e) {
-          if (state !== State.ERROR) {
-            showError(e?.reason || 'Session closed');
-          }
-          teardown();
-        },
-      },
-    });
-  } catch (err) {
-    showError(`Connection failed: ${err.message}`);
-    return;
-  }
+  ws.addEventListener('close', (e) => {
+    if (state !== State.ERROR) showError(e.reason || 'Session closed');
+    teardown();
+  });
 }
 
 function stopSession() {
-  geminiSession?.close().catch(() => {});
+  geminiSession?.close();
   teardown();
 }
 
@@ -172,6 +176,7 @@ function handleGeminiMessage(msg) {
   }
 }
 
+
 // ---------------------------------------------------------------------------
 // Microphone capture
 // ---------------------------------------------------------------------------
@@ -186,11 +191,13 @@ async function startCapture() {
     workletNode = new AudioWorkletNode(captureCtx, 'audio-capture-processor');
 
     workletNode.port.onmessage = (e) => {
-      if (e.data.type === 'pcm' && geminiSession) {
+      if (e.data.type === 'pcm' && geminiSession?.readyState === WebSocket.OPEN) {
         const base64 = arrayBufferToBase64(e.data.buffer);
-        geminiSession.sendRealtimeInput({
-          audio: { data: base64, mimeType: 'audio/pcm;rate=16000' },
-        }).catch(() => {});
+        geminiSession.send(JSON.stringify({
+          realtime_input: {
+            media_chunks: [{ data: base64, mime_type: 'audio/pcm;rate=16000' }],
+          },
+        }));
       }
     };
 
@@ -264,8 +271,8 @@ function teardown() {
   stopCapture();
   flushPlayback();
   playbackCtx?.close();
-  playbackCtx    = null;
-  geminiSession  = null;
+  playbackCtx   = null;
+  geminiSession = null;
   setState(State.IDLE);
   ui.btn.textContent = 'Start';
 }
