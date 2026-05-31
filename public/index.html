@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Voice Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f11;
+      color: #e8e8ea;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      gap: 1.5rem;
+      padding: 2rem;
+    }
+
+    h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: 0.02em; color: #fff; }
+
+    /* ── Orb button ─────────────────────────────────────────────────────── */
+    #btn-call {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #fff;
+      background: #2563eb;
+      box-shadow: 0 0 0 0 rgba(37,99,235,0.5);
+      transition: background 0.2s, transform 0.1s;
+    }
+    #btn-call:hover { background: #1d4ed8; }
+    #btn-call:active { transform: scale(0.95); }
+
+    /* State-driven styles */
+    body[data-state="connecting"] #btn-call { background: #64748b; cursor: wait; }
+    body[data-state="listening"]  #btn-call {
+      background: #16a34a;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    body[data-state="speaking"]   #btn-call { background: #9333ea; }
+    body[data-state="error"]      #btn-call { background: #dc2626; }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }
+      50%       { box-shadow: 0 0 0 18px rgba(22,163,74,0); }
+    }
+
+    /* ── Status text ────────────────────────────────────────────────────── */
+    #status {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      min-height: 1.2em;
+      text-align: center;
+    }
+
+    /* ── Error message ──────────────────────────────────────────────────── */
+    #error-msg {
+      color: #f87171;
+      font-size: 0.85rem;
+      max-width: 380px;
+      text-align: center;
+      min-height: 1.2em;
+    }
+
+    /* ── Transcript ─────────────────────────────────────────────────────── */
+    #transcript {
+      width: 100%;
+      max-width: 560px;
+      height: 260px;
+      overflow-y: auto;
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      scroll-behavior: smooth;
+    }
+
+    .transcript-line {
+      font-size: 0.88rem;
+      line-height: 1.5;
+      padding: 0.35rem 0.6rem;
+      border-radius: 6px;
+      max-width: 90%;
+    }
+    .transcript-user  { background: #1e3a5f; align-self: flex-end; color: #bfdbfe; }
+    .transcript-model { background: #27272a; align-self: flex-start; color: #d4d4d8; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────────── */
+    #transcript::-webkit-scrollbar { width: 5px; }
+    #transcript::-webkit-scrollbar-track { background: transparent; }
+    #transcript::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+  </style>
+</head>
+<body data-state="idle">
+  <h1>AI Voice Agent</h1>
+
+  <button id="btn-call">Start</button>
+
+  <p id="status">Click the button to start</p>
+  <p id="error-msg"></p>
+
+  <div id="transcript" aria-live="polite" aria-label="Conversation transcript"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
