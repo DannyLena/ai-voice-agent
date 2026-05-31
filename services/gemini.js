@@ -47,11 +47,12 @@ export async function createGeminiSession(config, handlers) {
       },
 
       onerror(err) {
+        console.error('[Gemini] session error:', err);
         onError(err instanceof Error ? err : new Error(String(err)));
       },
 
-      onclose() {
-        // Closed server-side — the WebSocket cleanup in server.js handles teardown.
+      onclose(e) {
+        console.warn('[Gemini] session closed — code:', e?.code, 'reason:', e?.reason);
       },
     },
   });
