@@ -92,7 +92,7 @@ async function startSession() {
 
   // ── 2. Connect directly to Gemini Live using ephemeral token ──────────────
   try {
-    const ai = new GoogleGenAI({ apiKey: tokenData.token, httpOptions: { apiVersion: 'v1beta' } });
+    const ai = new GoogleGenAI({ apiKey: tokenData.token, httpOptions: { apiVersion: 'v1alpha' } });
 
     geminiSession = await ai.live.connect({
       model: tokenData.model,
