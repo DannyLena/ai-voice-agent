@@ -1,21 +1,20 @@
+import { GoogleGenAI, Modality } from 'https://esm.sh/@google/genai@1.52.0/dist/web/index.mjs';
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const CAPTURE_SAMPLE_RATE = 16_000;  // Gemini input requirement
-const PLAYBACK_SAMPLE_RATE = 24_000; // Gemini output sample rate
+const CAPTURE_SAMPLE_RATE  = 16_000;
+const PLAYBACK_SAMPLE_RATE = 24_000;
 
 // ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
-// idle → connecting → ready → listening → speaking → idle
-//                           ↘ error
 const State = Object.freeze({
-  IDLE: 'idle',
+  IDLE:       'idle',
   CONNECTING: 'connecting',
-  READY: 'ready',
-  LISTENING: 'listening',
-  SPEAKING: 'speaking',
-  ERROR: 'error',
+  LISTENING:  'listening',
+  SPEAKING:   'speaking',
+  ERROR:      'error',
 });
 
 let state = State.IDLE;
@@ -26,7 +25,6 @@ function setState(next) {
   ui.status.textContent = {
     [State.IDLE]:       'Click the button to start',
     [State.CONNECTING]: 'Connecting…',
-    [State.READY]:      'Connected — hold to speak',
     [State.LISTENING]:  'Listening…',
     [State.SPEAKING]:   'Agent speaking…',
     [State.ERROR]:      'Error — see below',
@@ -46,13 +44,13 @@ const ui = {
 // ---------------------------------------------------------------------------
 // Session state
 // ---------------------------------------------------------------------------
-let ws = null;
-let captureCtx = null;
-let workletNode = null;
-let micStream = null;
-let playbackCtx = null;
-let playbackHead = 0;    // next scheduled start time in playback ctx
-let sourceNodes = [];    // active AudioBufferSourceNodes
+let geminiSession = null;
+let captureCtx    = null;
+let workletNode   = null;
+let micStream     = null;
+let playbackCtx   = null;
+let playbackHead  = 0;
+let sourceNodes   = [];
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -65,7 +63,7 @@ ui.btn.addEventListener('click', () => {
   }
 });
 
-function startSession() {
+async function startSession() {
   const clientId = new URLSearchParams(window.location.search).get('client_id');
   if (!clientId) {
     showError('Missing client_id in URL. Add ?client_id=YOUR_ID to the URL.');
@@ -76,60 +74,95 @@ function startSession() {
   ui.btn.textContent = 'Disconnect';
   ui.error.textContent = '';
 
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${protocol}://${location.host}/agent?client_id=${encodeURIComponent(clientId)}`);
-
-  ws.addEventListener('open', () => {});  // wait for 'ready' message
-  ws.addEventListener('message', onMessage);
-  ws.addEventListener('close', (e) => {
-    if (state !== State.ERROR) {
-      showError(e.reason || 'Connection closed');
+  // ── 1. Fetch ephemeral token from our serverless function ─────────────────
+  let tokenData;
+  try {
+    const res = await fetch(`/api/token?client_id=${encodeURIComponent(clientId)}`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? `Token request failed (${res.status})`);
     }
-    teardown();
-  });
-  ws.addEventListener('error', () => showError('WebSocket connection failed'));
+    tokenData = await res.json();
+  } catch (err) {
+    showError(`Setup failed: ${err.message}`);
+    return;
+  }
+
+  // ── 2. Connect directly to Gemini Live using ephemeral token ──────────────
+  try {
+    const ai = new GoogleGenAI({ apiKey: tokenData.token });
+
+    geminiSession = await ai.live.connect({
+      model: tokenData.model,
+      config: {
+        responseModalities: [Modality.AUDIO],
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+      },
+      callbacks: {
+        onopen() {
+          setState(State.LISTENING);
+          startCapture();
+        },
+
+        onmessage(msg) {
+          try { handleGeminiMessage(msg); } catch (err) { showError(err.message); }
+        },
+
+        onerror(err) {
+          showError(err instanceof Error ? err.message : String(err));
+        },
+
+        onclose(e) {
+          if (state !== State.ERROR) {
+            showError(e?.reason || 'Session closed');
+          }
+          teardown();
+        },
+      },
+    });
+  } catch (err) {
+    showError(`Connection failed: ${err.message}`);
+    return;
+  }
 }
 
 function stopSession() {
-  ws?.close(1000, 'user disconnected');
+  geminiSession?.close().catch(() => {});
   teardown();
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket message handler
+// Gemini message handler
 // ---------------------------------------------------------------------------
-function onMessage(event) {
-  let msg;
-  try { msg = JSON.parse(event.data); } catch { return; }
+function handleGeminiMessage(msg) {
+  const sc = msg.serverContent;
+  if (!sc) return;
 
-  switch (msg.type) {
-    case 'ready':
-      setState(State.READY);
-      startCapture();
-      break;
+  if (sc.interrupted) {
+    flushPlayback();
+    setState(State.LISTENING);
+    return;
+  }
 
-    case 'audio':
+  const parts = sc.modelTurn?.parts ?? [];
+  for (const part of parts) {
+    if (part.inlineData?.data) {
       setState(State.SPEAKING);
-      schedulePlayback(msg.data);
-      break;
+      schedulePlayback(part.inlineData.data);
+    }
+    if (part.text) {
+      appendTranscript('model', part.text);
+    }
+  }
 
-    case 'transcript':
-      appendTranscript(msg.role, msg.text);
-      break;
+  if (sc.inputTranscription?.text)  appendTranscript('user',  sc.inputTranscription.text);
+  if (sc.outputTranscription?.text) appendTranscript('model', sc.outputTranscription.text);
 
-    case 'interrupted':
-      flushPlayback();
-      setState(state === State.SPEAKING ? State.LISTENING : state);
-      break;
-
-    case 'turn_complete':
-      // Transition back to listening once all queued audio drains
-      waitForPlaybackEnd(() => setState(State.LISTENING));
-      break;
-
-    case 'error':
-      showError(`[${msg.code}] ${msg.message}`);
-      break;
+  if (sc.turnComplete) {
+    waitForPlaybackEnd(() => setState(State.LISTENING));
   }
 }
 
@@ -147,10 +180,11 @@ async function startCapture() {
     workletNode = new AudioWorkletNode(captureCtx, 'audio-capture-processor');
 
     workletNode.port.onmessage = (e) => {
-      if (e.data.type === 'pcm' && ws?.readyState === WebSocket.OPEN) {
+      if (e.data.type === 'pcm' && geminiSession) {
         const base64 = arrayBufferToBase64(e.data.buffer);
-        ws.send(JSON.stringify({ type: 'audio', data: base64 }));
-        if (state === State.READY || state === State.SPEAKING) setState(State.LISTENING);
+        geminiSession.sendRealtimeInput({
+          audio: { data: base64, mimeType: 'audio/pcm;rate=16000' },
+        }).catch(() => {});
       }
     };
 
@@ -167,8 +201,8 @@ function stopCapture() {
   captureCtx?.close();
   micStream?.getTracks().forEach((t) => t.stop());
   workletNode = null;
-  captureCtx = null;
-  micStream = null;
+  captureCtx  = null;
+  micStream   = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,15 +210,15 @@ function stopCapture() {
 // ---------------------------------------------------------------------------
 function getPlaybackCtx() {
   if (!playbackCtx || playbackCtx.state === 'closed') {
-    playbackCtx = new AudioContext({ sampleRate: PLAYBACK_SAMPLE_RATE });
+    playbackCtx  = new AudioContext({ sampleRate: PLAYBACK_SAMPLE_RATE });
     playbackHead = playbackCtx.currentTime;
   }
   return playbackCtx;
 }
 
 function schedulePlayback(base64Pcm) {
-  const ctx = getPlaybackCtx();
-  const int16 = new Int16Array(base64ToArrayBuffer(base64Pcm));
+  const ctx    = getPlaybackCtx();
+  const int16  = new Int16Array(base64ToArrayBuffer(base64Pcm));
   const float32 = int16ToFloat32(int16);
 
   const audioBuffer = ctx.createBuffer(1, float32.length, PLAYBACK_SAMPLE_RATE);
@@ -199,14 +233,12 @@ function schedulePlayback(base64Pcm) {
   playbackHead = startAt + audioBuffer.duration;
 
   sourceNodes.push(source);
-  source.onended = () => {
-    sourceNodes = sourceNodes.filter((n) => n !== source);
-  };
+  source.onended = () => { sourceNodes = sourceNodes.filter((n) => n !== source); };
 }
 
 function flushPlayback() {
   sourceNodes.forEach((n) => { try { n.stop(); } catch {} });
-  sourceNodes = [];
+  sourceNodes  = [];
   playbackHead = playbackCtx?.currentTime ?? 0;
 }
 
@@ -226,8 +258,8 @@ function teardown() {
   stopCapture();
   flushPlayback();
   playbackCtx?.close();
-  playbackCtx = null;
-  ws = null;
+  playbackCtx    = null;
+  geminiSession  = null;
   setState(State.IDLE);
   ui.btn.textContent = 'Start';
 }
@@ -260,15 +292,15 @@ function arrayBufferToBase64(buffer) {
 
 function base64ToArrayBuffer(base64) {
   const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
+  const bytes  = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
 }
 
 function int16ToFloat32(int16) {
-  const float32 = new Float32Array(int16.length);
+  const out = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i++) {
-    float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
+    out[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
   }
-  return float32;
+  return out;
 }

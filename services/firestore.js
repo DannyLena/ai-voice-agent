@@ -6,7 +6,14 @@ const CLIENTS_COLLECTION = 'clients';
 
 function getDb() {
   if (!getApps().length) {
-    initializeApp({ credential: cert(process.env.GOOGLE_APPLICATION_CREDENTIALS) });
+    let credential;
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      credential = cert(JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON));
+    } else {
+      // local dev: path to JSON key file
+      credential = cert(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+    }
+    initializeApp({ credential });
   }
   return getFirestore();
 }
