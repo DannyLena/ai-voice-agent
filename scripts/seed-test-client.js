@@ -15,18 +15,8 @@ const db = getFirestore();
 
 const encrypted_api_key = encrypt(geminiApiKey);
 
-const doc = {
-  display_name:      'Test Client',
-  encrypted_api_key,
-  model:             'gemini-2.5-flash-native-audio-latest',
-  voice:             'Puck',
-  system_prompt:     'You are a helpful, concise voice assistant.',
-  enabled:           true,
-};
+// update() preserves all other fields (system_prompt, voice, model, display_name, etc.)
+await db.collection('clients').doc(clientId).update({ encrypted_api_key });
 
-await db.collection('clients').doc(clientId).set(doc);
-
-console.log(`✓ Firestore document written: clients/${clientId}`);
-console.log(`  model: ${doc.model}`);
-console.log(`  voice: ${doc.voice}`);
+console.log(`✓ encrypted_api_key updated on clients/${clientId}`);
 console.log(`  encrypted_api_key: ${encrypted_api_key.slice(0, 20)}…`);
